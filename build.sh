@@ -13,9 +13,11 @@ swift build -c release --arch arm64
 BIN="$(swift build -c release --arch arm64 --show-bin-path)/${APP_NAME}"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/${APP_NAME}"
 cp Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp Resources/MenuBarIcon.png "$APP/Contents/Resources/MenuBarIcon.png"
 
 # ad-hoc 署名。識別子を固定して、再ビルドしても TCC の対象アプリとして同じ名前で扱われるようにする
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"

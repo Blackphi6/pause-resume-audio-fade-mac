@@ -35,8 +35,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.preferences = preferences
         super.init()
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "PauseResumeAudioFade")
-            button.image?.isTemplate = true
+            let icon = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png")
+                .flatMap { NSImage(contentsOf: $0) }
+                ?? NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)
+            icon?.isTemplate = true
+            icon?.size = NSSize(width: 20, height: 20 * (icon!.size.height / icon!.size.width))
+            button.image = icon
+            button.image?.accessibilityDescription = "PauseResumeAudioFade"
         }
         let menu = NSMenu()
         menu.delegate = self
