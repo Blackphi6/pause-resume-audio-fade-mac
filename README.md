@@ -1,5 +1,8 @@
 # Pause Resume Audio Fade for Mac
 
+[![Downloads](https://img.shields.io/github/downloads/Blackphi6/pause-resume-audio-fade-mac/total?label=downloads)](https://github.com/Blackphi6/pause-resume-audio-fade-mac/releases)
+[![Latest release](https://img.shields.io/github/v/release/Blackphi6/pause-resume-audio-fade-mac?filter=mac-v*&label=latest)](https://github.com/Blackphi6/pause-resume-audio-fade-mac/releases/latest)
+
 Chrome 拡張「Pause Resume Audio Fade」の機能（一時停止・再開・シークでの音のフェード）を、
 **どのアプリの再生音にも**効かせる Mac 用メニューバーアプリです（v2.0 以降）。
 
@@ -69,3 +72,12 @@ python3 scripts/e2e_check.py --normal   # 通常起動（メニューバーア�
 E2E は極小振幅（−30 dBFS）のテスト音を `afplay` で鳴らし、`SIGSTOP`/`SIGCONT` で
 「別アプリが一時停止・再開・シークした」状況を作って、実際の出力のピーク推移を判定します。
 システム音量は変更しません。再生中の他の音があると判定が乱れるため、実行中は他のアプリの再生を止めてください。
+
+## 配布状況
+
+```bash
+./scripts/stats.sh   # リリースごとのダウンロード数と、直近14日のクローン/閲覧数
+```
+
+数えられるのは GitHub 上のダウンロード数だけです。このアプリは利用状況を一切送信しない（音声も含め外部通信なし）ため、
+「実際に何人が使っているか」は分かりません。ダウンロード数は、更新の取得・再ダウンロード・ボットも含みます。
