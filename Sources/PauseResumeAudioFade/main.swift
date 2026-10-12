@@ -59,6 +59,16 @@ if #available(macOS 14.2, *), CommandLine.arguments.count >= 4, CommandLine.argu
     exit(0)
 }
 
+// 検証用: マイク使用の変化を <秒> の間表示する（別プロセスでマイクを開閉して通話中判定を確認する）
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--mic-check" {
+    let seconds = Double(CommandLine.arguments[2]) ?? 10
+    var watcher: MicActivityWatcher?
+    watcher = MicActivityWatcher { print("マイク使用中=\(watcher?.isInUse ?? false)"); fflush(stdout) }
+    print("開始: マイク使用中=\(watcher?.isInUse ?? false)"); fflush(stdout)
+    RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    exit(0)
+}
+
 if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--tcc" {
     print("audio capture permission: \(AudioCapturePermission.current())")
     exit(0)

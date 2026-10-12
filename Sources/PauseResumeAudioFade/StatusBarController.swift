@@ -19,6 +19,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     var onToggleFadeIn: (Bool) -> Void = { _ in }
     var onToggleSeekFadeIn: (Bool) -> Void = { _ in }
     var onSelectFadeInMs: (Int) -> Void = { _ in }
+    var onToggleBypassDuringCalls: (Bool) -> Void = { _ in }
     var onToggleLoginItem: (Bool) -> Void = { _ in }
     var onOpenPermissionSettings: () -> Void = {}
     var onQuit: () -> Void = {}
@@ -100,6 +101,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
         fadeIn.submenu = fadeInMenu
         menu.addItem(fadeIn)
+
+        let bypass = action("通話中はフェードしない", checked: preferences.bypassDuringCalls) { [weak self] in
+            guard let self else { return }
+            self.onToggleBypassDuringCalls(!self.preferences.bypassDuringCalls)
+        }
+        bypass.toolTip = "マイクが使われている間は、フェードも音の遅延も止めて、通話の音をそのまま通します。会話の合間の無音を一時停止と間違えないための設定です。"
+        menu.addItem(bypass)
         menu.addItem(.separator())
 
         let login = action("ログイン時に起動", checked: state.loginItemEnabled) { [weak self] in

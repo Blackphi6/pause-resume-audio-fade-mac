@@ -1,5 +1,6 @@
 import AppKit
 import CoreAudio
+import FadeCore
 import ServiceManagement
 
 /// 既定の出力デバイス、および使用中デバイスのサンプルレートの変化を監視する。
@@ -43,6 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let engine = AudioTapEngine()
     private lazy var statusBar = StatusBarController(preferences: preferences)
     private var deviceWatcher: DeviceWatcher?
+    private var micWatcher: MicActivityWatcher?
+    /// マイクが一瞬途切れても通話中とみなし続ける（解除は 3 秒後）
+    private var callGate = HoldOffGate(releaseDelay: 3)
+    private var callCheckWorkItem: DispatchWorkItem?
     private var restartWorkItem: DispatchWorkItem?
     private var lastError: String?
     private var loginItemNote: String?
@@ -55,12 +60,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar.onToggleFadeIn = { [unowned self] in preferences.fadeInEnabled = $0; scheduleRestart(after: 0.2) }
         statusBar.onToggleSeekFadeIn = { [unowned self] in preferences.seekFadeInEnabled = $0; scheduleRestart(after: 0.2) }
         statusBar.onSelectFadeInMs = { [unowned self] in preferences.fadeInMs = $0; scheduleRestart(after: 0.2) }
+        statusBar.onToggleBypassDuringCalls = { [unowned self] in preferences.bypassDuringCalls = $0; evaluateCallState() }
         statusBar.onToggleLoginItem = { [unowned self] in setLoginItem($0) }
         statusBar.onOpenPermissionSettings = { NSWorkspace.shared.open(AudioCapturePermission.settingsURL) }
         statusBar.onQuit = { NSApp.terminate(nil) }
         _ = statusBar
 
         deviceWatcher = DeviceWatcher { [weak self] in self?.scheduleRestart(after: 0.5) }
+        micWatcher = MicActivityWatcher { [weak self] in self?.evaluateCallState() }
+        evaluateCallState()
 
         let center = NSWorkspace.shared.notificationCenter
         // スリープ中は音声デバイスが不安定になるので止め、復帰後に作り直す
@@ -95,8 +103,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
+    /// 通話中（マイク使用中）かを判定し直す。変わったときだけエンジンを止める／起こす
+    private func evaluateCallState() {
+        callCheckWorkItem?.cancel()
+        let wasHeld = callGate.isHeld
+        if !preferences.bypassDuringCalls { callGate = HoldOffGate(releaseDelay: callGate.releaseDelay) }
+        let active = preferences.bypassDuringCalls && (micWatcher?.isInUse ?? false)
+        let now = ProcessInfo.processInfo.systemUptime
+        callGate.update(active: active, now: now)
+        if callGate.isHeld != wasHeld { scheduleRestart(after: 0) }
+
+        // マイクが止まった後の解除は、イベントが来ないので自分で再確認を予約する
+        if let remaining = callGate.remainingDelay(now: now) {
+            let item = DispatchWorkItem { [weak self] in self?.evaluateCallState() }
+            callCheckWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining + 0.05, execute: item)
+        }
+    }
+
     private func restartEngine() {
         guard preferences.enabled else {
+            engine.stop()
+            lastError = nil
+            return
+        }
+        // 通話中はタップごと止める。音は元の経路をそのまま通るので、遅延もフェードも掛からない
+        guard !callGate.isHeld else {
             engine.stop()
             lastError = nil
             return
@@ -129,6 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             status = "停止中（無効）"
         } else if permission == .denied {
             status = "システム音声の録音が許可されていません"
+        } else if callGate.isHeld {
+            status = "通話中のため一時停止（フェードなし）"
         } else if let error = lastError {
             status = "エラー: \(error)"
         } else if let info = engine.info {

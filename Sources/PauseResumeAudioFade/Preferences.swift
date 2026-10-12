@@ -38,6 +38,7 @@ final class Preferences {
         static let fadeInEnabled = "fadeInEnabled"
         static let seekFadeInEnabled = "seekFadeInEnabled"
         static let fadeInMs = "fadeInDurationMs"
+        static let bypassDuringCalls = "bypassDuringCalls"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -48,7 +49,15 @@ final class Preferences {
             Key.fadeInEnabled: true,
             Key.seekFadeInEnabled: true,
             Key.fadeInMs: 300,
+            Key.bypassDuringCalls: true,
         ])
+    }
+
+    /// マイクが使われている間（通話中）はタップを止め、フェードも遅延も掛けない。
+    /// 会話の合間の無音を「一時停止」と誤って判定してしまうため、既定で有効
+    var bypassDuringCalls: Bool {
+        get { defaults.bool(forKey: Key.bypassDuringCalls) }
+        set { defaults.set(newValue, forKey: Key.bypassDuringCalls) }
     }
 
     var enabled: Bool {
