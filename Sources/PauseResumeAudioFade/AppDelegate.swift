@@ -60,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar.onToggleFadeIn = { [unowned self] in preferences.fadeInEnabled = $0; scheduleRestart(after: 0.2) }
         statusBar.onToggleSeekFadeIn = { [unowned self] in preferences.seekFadeInEnabled = $0; scheduleRestart(after: 0.2) }
         statusBar.onSelectFadeInMs = { [unowned self] in preferences.fadeInMs = $0; scheduleRestart(after: 0.2) }
+        statusBar.onToggleSkipGentleEdges = { [unowned self] in preferences.skipGentleEdges = $0; scheduleRestart(after: 0.2) }
         statusBar.onToggleBypassDuringCalls = { [unowned self] in preferences.bypassDuringCalls = $0; evaluateCallState() }
         statusBar.onToggleLoginItem = { [unowned self] in setLoginItem($0) }
         statusBar.onOpenPermissionSettings = { NSWorkspace.shared.open(AudioCapturePermission.settingsURL) }

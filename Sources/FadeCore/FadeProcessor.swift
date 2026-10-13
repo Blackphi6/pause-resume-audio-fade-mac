@@ -21,6 +21,14 @@ public struct FadeSettings: Equatable {
     public var silenceThresholdDB = -80.0
     /// 無音がこの長さ続いた時点で「途切れた」と確定し、直前をさかのぼってフェードする
     public var confirmMs = 15.0
+    /// 無音の直後の gentleEdgeWindowMs、および無音の直前の gentleEdgeWindowMs のあいだ、
+    /// 振幅がずっとこの値以下なら「滑らかな縁」とみなして、フェードを掛けない。
+    /// 音声合成や曲頭・曲末は、数十 ms かけてほぼ無音から立ち上がり、ほぼ無音まで戻る（実測で
+    /// −80dB→−45dB に 10〜40ms）ので、フェードは冒頭・語尾を弱めるだけになる。
+    /// 一時停止・再開した動画は、OS の極短いランプ（約 0.3ms）のあとすぐ全開になるので、これまでどおり掛かる。
+    /// 判定を無効にするには十分小さい値（-200 など）にする
+    public var gentleEdgeDB = -45.0
+    public var gentleEdgeWindowMs = 2.0
 
     public init() {}
 }
@@ -43,6 +51,12 @@ public final class FadeProcessor {
         var length: Int64
     }
 
+    /// 無音明けの音の始まり。縁が滑らかかの判定が済むまで、フェードインの登録を保留する
+    private struct Onset {
+        var start: Int64
+        var gapFrames: Int
+    }
+
     private let lookahead: Int
     private let confirmFrames: Int
     private let fadeOutFrames: Int
@@ -50,6 +64,8 @@ public final class FadeProcessor {
     private let resumeGapFrames: Int
     private let seekGapFrames: Int
     private let threshold: Float
+    private let gentleEdge: Float
+    private let gentleWindowFrames: Int
 
     private let ringFrames: Int
     private let ring: UnsafeMutablePointer<Float>
@@ -61,6 +77,7 @@ public final class FadeProcessor {
 
     private var inIndex: Int64 = 0
     private var silentRun = 0
+    private var pendingOnset: Onset?
 
     public init(sampleRate: Double, channels: Int, settings: FadeSettings) {
         self.sampleRate = sampleRate
@@ -76,6 +93,8 @@ public final class FadeProcessor {
         resumeGapFrames = frames(settings.resumeGapMs)
         seekGapFrames = frames(settings.seekGapMs)
         threshold = Float(pow(10.0, settings.silenceThresholdDB / 20.0))
+        gentleEdge = Float(pow(10.0, settings.gentleEdgeDB / 20.0))
+        gentleWindowFrames = max(1, frames(settings.gentleEdgeWindowMs))
 
         // 確定までに confirmFrames かかるので、遡れるのは先読み - 確定待ち - 余白 まで
         let maxFadeOut = lookahead - confirmFrames - 1
@@ -118,11 +137,22 @@ public final class FadeProcessor {
             }
 
             if peak > threshold {
-                if silentRun > 0 { registerOnset(gapFrames: silentRun) }
+                // 立ち上がりの極小の振幅は無音しきい値を行き来するので、判定中の始まりは上書きしない
+                if silentRun > 0 && pendingOnset == nil { pendingOnset = Onset(start: inIndex, gapFrames: silentRun) }
                 silentRun = 0
             } else {
                 if silentRun < Int.max / 2 { silentRun += 1 }
                 if silentRun == confirmFrames { registerGapStart() }
+            }
+
+            // 始まりの判定: 窓のあいだに gentleEdge を超えたら「ぶつ切り」、超えないまま窓が過ぎたら「滑らか」
+            if let onset = pendingOnset {
+                if peak > gentleEdge {
+                    registerOnset(onset)
+                    pendingOnset = nil
+                } else if inIndex - onset.start >= Int64(gentleWindowFrames) {
+                    pendingOnset = nil
+                }
             }
 
             let write = Int(inIndex % cap) * ch
@@ -149,10 +179,27 @@ public final class FadeProcessor {
         fadeOutCount = 0
         inIndex = 0
         silentRun = 0
+        pendingOnset = nil
+    }
+
+    /// 無音が確定した時点で、その直前 gentleWindowFrames のピーク。ring に残っている範囲だけ見る
+    private func peakBeforeGap() -> Float {
+        let last = inIndex - Int64(confirmFrames) // 最後に音があったフレーム
+        let first = max(last - Int64(gentleWindowFrames) + 1, inIndex - Int64(lookahead), 0)
+        var peak: Float = 0
+        var i = first
+        while i <= last {
+            let base = Int(i % Int64(ringFrames)) * channels
+            for c in 0..<channels { peak = max(peak, abs(ring[base + c])) }
+            i += 1
+        }
+        return peak
     }
 
     private func registerGapStart() {
         guard fadeOutFrames > 0 else { return }
+        // 直前の数 ms がずっと小さい（自然な終わり）なら、ぶつ切りではないのでフェード不要
+        guard peakBeforeGap() > gentleEdge else { return }
         // silentRun はちょうど confirmFrames に達した瞬間なので、無音の先頭はそこから遡った位置
         let gapStart = inIndex - Int64(confirmFrames - 1)
         let earliest = inIndex - Int64(lookahead) // これより前はもう出力済み
@@ -161,12 +208,14 @@ public final class FadeProcessor {
         push(fadeOuts, &fadeOutCount, Ramp(start: start, length: gapStart - start))
     }
 
-    private func registerOnset(gapFrames: Int) {
+    private func registerOnset(_ onset: Onset) {
         guard fadeInFrames > 0 else { return }
-        let isResume = gapFrames >= resumeGapFrames
-        let isSeek = !isResume && gapFrames >= seekGapFrames
+        let isResume = onset.gapFrames >= resumeGapFrames
+        let isSeek = !isResume && onset.gapFrames >= seekGapFrames
         if (isResume && settings.fadeInEnabled) || (isSeek && settings.seekFadeInEnabled) {
-            push(fadeIns, &fadeInCount, Ramp(start: inIndex, length: Int64(fadeInFrames)))
+            // 判定のために数フレーム待ったので、始まりが出力済みなら、いまからの区間に掛ける
+            let start = max(onset.start, inIndex - Int64(lookahead))
+            push(fadeIns, &fadeInCount, Ramp(start: start, length: Int64(fadeInFrames)))
         }
     }
 

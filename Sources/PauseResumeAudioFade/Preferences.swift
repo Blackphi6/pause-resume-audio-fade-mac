@@ -39,6 +39,7 @@ final class Preferences {
         static let seekFadeInEnabled = "seekFadeInEnabled"
         static let fadeInMs = "fadeInDurationMs"
         static let bypassDuringCalls = "bypassDuringCalls"
+        static let skipGentleEdges = "skipGentleEdges"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -50,7 +51,15 @@ final class Preferences {
             Key.seekFadeInEnabled: true,
             Key.fadeInMs: 300,
             Key.bypassDuringCalls: true,
+            Key.skipGentleEdges: true,
         ])
+    }
+
+    /// ほぼゼロから始まって、ほぼゼロで終わる音（音声合成・曲頭曲末）にはフェードを掛けない。
+    /// 掛けると文頭・語尾が弱まって聞き取りづらくなる。判定を誤ったときのために切り替えられる
+    var skipGentleEdges: Bool {
+        get { defaults.bool(forKey: Key.skipGentleEdges) }
+        set { defaults.set(newValue, forKey: Key.skipGentleEdges) }
     }
 
     /// マイクが使われている間（通話中）はタップを止め、フェードも遅延も掛けない。
@@ -93,6 +102,7 @@ final class Preferences {
         s.fadeInEnabled = fadeInEnabled
         s.seekFadeInEnabled = seekFadeInEnabled
         s.fadeInMs = Double(fadeInMs)
+        if !skipGentleEdges { s.gentleEdgeDB = -200 }
         return s
     }
 }

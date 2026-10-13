@@ -19,6 +19,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     var onToggleFadeIn: (Bool) -> Void = { _ in }
     var onToggleSeekFadeIn: (Bool) -> Void = { _ in }
     var onSelectFadeInMs: (Int) -> Void = { _ in }
+    var onToggleSkipGentleEdges: (Bool) -> Void = { _ in }
     var onToggleBypassDuringCalls: (Bool) -> Void = { _ in }
     var onToggleLoginItem: (Bool) -> Void = { _ in }
     var onOpenPermissionSettings: () -> Void = {}
@@ -101,6 +102,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
         fadeIn.submenu = fadeInMenu
         menu.addItem(fadeIn)
+
+        let gentle = action("読み上げ音声など滑らかな音にはフェードしない", checked: preferences.skipGentleEdges) { [weak self] in
+            guard let self else { return }
+            self.onToggleSkipGentleEdges(!self.preferences.skipGentleEdges)
+        }
+        gentle.toolTip = "音声合成や曲の頭・終わりのように、ほぼ無音から始まって、ほぼ無音で終わる音には、フェードを掛けません。文頭や語尾が弱くなって聞き取りづらくなるのを防ぎます。動画の一時停止・再開には、これまでどおり掛かります。"
+        menu.addItem(gentle)
 
         let bypass = action("通話中はフェードしない", checked: preferences.bypassDuringCalls) { [weak self] in
             guard let self else { return }
