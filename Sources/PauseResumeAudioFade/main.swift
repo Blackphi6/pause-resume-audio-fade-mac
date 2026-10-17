@@ -69,6 +69,38 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--mic-check" {
     exit(0)
 }
 
+// 検証用: 他のアプリの「生の音」の始まり・終わりの速さと、フェード判定を <秒> の間表示する
+//   別のプレイヤー（QuickTime、VLC、Chrome など）で再生・一時停止・再開して、違いを測るために使う
+if #available(macOS 14.2, *), CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--diag-onset" {
+    let seconds = Double(CommandLine.arguments[2]) ?? 30
+    let diag = OnsetDiag()
+    do { try diag.start() } catch { print("開始失敗: \(error)"); exit(1) }
+    print("計測中（\(Int(seconds))秒）。再生・一時停止・再開を操作してください")
+    fflush(stdout)
+    var shown = 0
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline {
+        while shown < diag.eventCount {
+            let e = diag.event(shown)
+            let t = Double(e.atFrame) / diag.sampleRate
+            let ms = { (f: Int) in String(format: "%.2f", Double(f) / diag.sampleRate * 1000) }
+            if e.isOnset {
+                print(String(format: "[%6.2fs] 音の始まり: 直前の無音 %@ms / 立ち上がり(-80→-45dB) %@ms / 到達 %.3f → 判定: %@",
+                             t, String(Int(Double(e.gapFrames) / diag.sampleRate * 1000)), ms(e.edgeFrames), e.peakAfter,
+                             e.gentle ? "滑らか（フェードインしない）" : "ぶつ切り（フェードインする）"))
+            } else {
+                print(String(format: "[%6.2fs] 音の終わり: 落ち方(-45→-80dB) %@ms → 判定: %@",
+                             t, ms(e.edgeFrames), e.gentle ? "滑らか（フェードアウトしない）" : "ぶつ切り（フェードアウトする）"))
+            }
+            fflush(stdout)
+            shown += 1
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    diag.stop()
+    exit(0)
+}
+
 if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--tcc" {
     print("audio capture permission: \(AudioCapturePermission.current())")
     exit(0)
