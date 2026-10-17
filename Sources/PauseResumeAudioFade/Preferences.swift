@@ -40,6 +40,8 @@ final class Preferences {
         static let fadeInMs = "fadeInDurationMs"
         static let bypassDuringCalls = "bypassDuringCalls"
         static let skipGentleEdges = "skipGentleEdges"
+        static let keepAliveDB = "keepAliveDB"
+        static let keepAliveHz = "keepAliveHz"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -52,8 +54,15 @@ final class Preferences {
             Key.fadeInMs: 300,
             Key.bypassDuringCalls: true,
             Key.skipGentleEdges: true,
+            Key.keepAliveDB: -200.0,
+            Key.keepAliveHz: 18.0,
         ])
     }
+
+    /// 実験用（メニューには出さない）。出力に常時足す、聞こえない極低周波のレベル(dBFS)。-150 以下で無効。
+    /// 設定方法: defaults write io.github.blackphi6.PauseResumeAudioFade keepAliveDB -float -50
+    var keepAliveDB: Double { defaults.double(forKey: Key.keepAliveDB) }
+    var keepAliveHz: Double { min(40, max(5, defaults.double(forKey: Key.keepAliveHz))) }
 
     /// ほぼゼロから始まって、ほぼゼロで終わる音（音声合成・曲頭曲末）にはフェードを掛けない。
     /// 掛けると文頭・語尾が弱まって聞き取りづらくなる。判定を誤ったときのために切り替えられる

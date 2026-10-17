@@ -34,6 +34,7 @@ final class AudioTapEngine {
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
     private var processor: FadeProcessor?
+    private var keepAliveTone = KeepAliveTone(sampleRate: 48_000, frequency: 18, levelDB: -200)
     private let ioQueue = DispatchQueue(label: "pauseresume.io", qos: .userInteractive)
 
     private(set) var info: RunningInfo?
@@ -72,17 +73,18 @@ final class AudioTapEngine {
         outScratch.deallocate()
     }
 
-    func start(settings: FadeSettings) throws {
+    /// keepAlive: 出力に常時足す聞こえない極低周波（周波数 Hz, レベル dBFS）。実験用で、既定は無効
+    func start(settings: FadeSettings, keepAlive: (hz: Double, db: Double) = (18, -200)) throws {
         stop()
         do {
-            try startInternal(settings: settings)
+            try startInternal(settings: settings, keepAlive: keepAlive)
         } catch {
             stop()
             throw error
         }
     }
 
-    private func startInternal(settings: FadeSettings) throws {
+    private func startInternal(settings: FadeSettings, keepAlive: (hz: Double, db: Double)) throws {
         let outDevice = try CoreAudioUtil.defaultOutputDevice()
         guard outDevice != kAudioObjectUnknown else { throw EngineError.noOutputDevice }
         let outUID = try wrap { try CoreAudioUtil.deviceUID(outDevice) }
@@ -128,6 +130,7 @@ final class AudioTapEngine {
         let sampleRate = CoreAudioUtil.nominalSampleRate(aggregateID)
         let processor = FadeProcessor(sampleRate: sampleRate, channels: tapChannels, settings: settings)
         self.processor = processor
+        keepAliveTone = KeepAliveTone(sampleRate: sampleRate, frequency: keepAlive.hz, levelDB: keepAlive.db)
 
         status = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, ioQueue) { [unowned self] _, inData, _, outData, _ in
             self.render(inData: inData, outData: outData)
@@ -235,6 +238,7 @@ final class AudioTapEngine {
         inputPeak = peakIn
 
         processor.process(input: inScratch, output: outScratch, frameCount: frames)
+        keepAliveTone.mix(into: outScratch, frameCount: frames, channels: tapChannels)
         var peakOut: Float = 0
         for i in 0..<(frames * tapChannels) { peakOut = max(peakOut, abs(outScratch[i])) }
         outputPeak = peakOut

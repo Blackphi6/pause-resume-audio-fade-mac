@@ -135,7 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         do {
-            try engine.start(settings: preferences.fadeSettings)
+            try engine.start(settings: preferences.fadeSettings,
+                             keepAlive: (preferences.keepAliveHz, preferences.keepAliveDB))
             lastError = nil
             deviceWatcher?.watchCurrentDevice()
         } catch {
