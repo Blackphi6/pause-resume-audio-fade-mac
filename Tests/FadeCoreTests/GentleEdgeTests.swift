@@ -14,26 +14,34 @@ private enum Edge {
     case systemRamp
     /// 音声合成や曲頭・曲末のように、数十 ms かけて、ほぼ無音から立ち上がる／戻る
     case gentle
+    /// プレイヤー自前のクリック防止ランプ。QuickTime Player は再開のたびに、約 36ms かけて 2 乗カーブで立ち上げる
+    /// （実機の計測: −80→−45dB に 16〜20ms。音声合成の立ち上がり 18ms とほぼ同じ）
+    case deClick
 }
 
-/// 440Hz の音。縁は edge の形にする
-private func burst(ms: Double, edge: Edge, amp: Float = 0.5) -> [Float] {
+private func envelope(_ edge: Edge, distance d: Float) -> Float {
+    switch edge {
+    case .abrupt: return 1
+    case .systemRamp:
+        // 実機の計測: 最初のサンプルは 0.0001〜0.0002（−80dB 付近）、約 16 フレーム（0.33ms）で全開になる
+        let x = min(1, d / Float(frames(0.33)))
+        return x * x * x
+    case .gentle:
+        // 30ms かけて -60dB から 0dB まで、dB に対して直線で上げる（音声の立ち上がりに近い）
+        let x = min(1, d / Float(frames(30)))
+        return powf(10, -3 * (1 - x))
+    case .deClick:
+        let x = min(1, d / Float(frames(36)))
+        return x * x
+    }
+}
+
+/// 440Hz の音。始まりは edge、終わりは endEdge（省略時は edge）の形にする
+private func burst(ms: Double, edge: Edge, endEdge: Edge? = nil, amp: Float = 0.5) -> [Float] {
     let n = frames(ms)
     var out = [Float](repeating: 0, count: n * ch)
     for i in 0..<n {
-        let d = Float(min(i + 1, n - i)) // 縁からの距離（フレーム）
-        let env: Float
-        switch edge {
-        case .abrupt: env = 1
-        case .systemRamp:
-            // 実機の計測: 最初のサンプルは 0.0001〜0.0002（−80dB 付近）、約 16 フレーム（0.33ms）で全開になる
-            let x = min(1, d / Float(frames(0.33)))
-            env = x * x * x
-        case .gentle:
-            // 30ms かけて -60dB から 0dB まで、dB に対して直線で上げる（音声の立ち上がりに近い）
-            let x = min(1, d / Float(frames(30)))
-            env = powf(10, -3 * (1 - x))
-        }
+        let env = envelope(edge, distance: Float(i + 1)) * envelope(endEdge ?? edge, distance: Float(n - i))
         let v = amp * env * cosf(2 * .pi * 440 * Float(i) / Float(sr))
         for c in 0..<ch { out[i * ch + c] = v }
     }
@@ -148,6 +156,55 @@ final class GentleEdgeTests: XCTestCase {
         for i in 0..<6 { for c in 0..<ch { input[(gap + i) * ch + c] = i % 2 == 0 ? 0.0003 : 0.00005 } }
         let out = render(s, input)
         XCTAssertLessThan(throughput(out, input, from: gap + frames(1), to: gap + frames(10), latency: latency), 0.05)
+    }
+
+    // MARK: 一時停止（ぶつ切りの終わり）のあとの再開は、立ち上がりが遅くても、フェードインする
+
+    /// QuickTime の再開: 直前の終わりがぶつ切り（一時停止）なら、自前の 36ms ランプで立ち上がっても再開とみなす
+    func testResumeAfterAbruptPauseIsFadedInEvenIfPlayerRampsItself() {
+        let gap = frames(500) + frames(1000)
+        let input = burst(ms: 500, edge: .abrupt, amp: 0.03) + silence(ms: 1000)
+            + burst(ms: 1500, edge: .deClick, endEdge: .abrupt, amp: 0.03)
+        let out = render(s, input)
+        // 36ms の自前ランプの途中（10〜30ms）の、出力 ÷ 入力。フェードインが掛かっていれば 0 に近い
+        XCTAssertLessThan(throughput(out, input, from: gap + frames(10), to: gap + frames(30), latency: latency), 0.3)
+    }
+
+    /// 自然な終わり（音声合成）のあとの、同じ形の始まりは、滑らかとみなしてフェードインしない
+    func testSameRampAfterGentleEndIsNotFadedIn() {
+        let gap = frames(500) + frames(1000)
+        let input = burst(ms: 500, edge: .gentle, amp: 0.03) + silence(ms: 1000)
+            + burst(ms: 1500, edge: .deClick, endEdge: .gentle, amp: 0.03)
+        let out = render(s, input)
+        XCTAssertEqual(throughput(out, input, from: gap + frames(10), to: gap + frames(300), latency: latency), 1, accuracy: 1e-5)
+    }
+
+    /// 直前に音がない（再生の最初）なら、同じ形の始まりも滑らか
+    func testSameRampAtVeryFirstSoundIsNotFadedIn() {
+        let gap = frames(1000)
+        let input = silence(ms: 1000) + burst(ms: 1500, edge: .deClick, endEdge: .abrupt, amp: 0.03)
+        let out = render(s, input)
+        XCTAssertEqual(throughput(out, input, from: gap + frames(10), to: gap + frames(300), latency: latency), 1, accuracy: 1e-5)
+    }
+
+    /// 再開で一度使ったら、その後の音声合成（自然な終わりの連続）は、滑らかとして素通しに戻る
+    func testPauseFlagIsConsumedByTheResume() {
+        var input = burst(ms: 500, edge: .abrupt, amp: 0.03) + silence(ms: 1000)
+        input += burst(ms: 600, edge: .deClick, endEdge: .gentle, amp: 0.03) + silence(ms: 800)
+        let sentenceStart = input.count / ch
+        input += burst(ms: 600, edge: .gentle, endEdge: .gentle, amp: 0.03) + silence(ms: 300)
+        let out = render(s, input)
+        XCTAssertEqual(throughput(out, input, from: sentenceStart + frames(40), to: sentenceStart + frames(300), latency: latency), 1, accuracy: 1e-5)
+    }
+
+    /// フェードアウトなし（先読み 0）でも、ぶつ切りの終わりを覚えていて、再開をフェードインする
+    func testResumeAfterAbruptPauseWorksWithoutLookahead() {
+        s.lookaheadMs = 0
+        let gap = frames(500) + frames(1000)
+        let input = burst(ms: 500, edge: .abrupt, amp: 0.03) + silence(ms: 1000)
+            + burst(ms: 1500, edge: .deClick, endEdge: .abrupt, amp: 0.03)
+        let out = render(s, input)
+        XCTAssertLessThan(throughput(out, input, from: gap + frames(10), to: gap + frames(30), latency: 0), 0.3)
     }
 
     // MARK: 設定

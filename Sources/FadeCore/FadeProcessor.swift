@@ -78,6 +78,12 @@ public final class FadeProcessor {
     private var inIndex: Int64 = 0
     private var silentRun = 0
     private var pendingOnset: Onset?
+    /// 無音でない最後のフレーム、gentleEdge を超えた最後のフレーム。終わりの落ち方の判定に使う
+    private var lastSoundIndex: Int64 = -1
+    private var lastLoudIndex: Int64 = -1
+    private var lastGapConfirmIndex: Int64 = -1
+    /// 直前の音が「ぶつ切り」で止まった（一時停止）か。次の長い無音明けは、立ち上がりが遅くても再開とみなす
+    private var pausedBefore = false
 
     public init(sampleRate: Double, channels: Int, settings: FadeSettings) {
         self.sampleRate = sampleRate
@@ -137,9 +143,21 @@ public final class FadeProcessor {
             }
 
             if peak > threshold {
-                // 立ち上がりの極小の振幅は無音しきい値を行き来するので、判定中の始まりは上書きしない
-                if silentRun > 0 && pendingOnset == nil { pendingOnset = Onset(start: inIndex, gapFrames: silentRun) }
+                if silentRun > 0 {
+                    let onset = Onset(start: inIndex, gapFrames: silentRun)
+                    if pausedBefore && silentRun >= seekGapFrames {
+                        // 直前の音がぶつ切りで止まっていた（一時停止）。プレイヤーが自前のランプで立ち上げても再開なので、
+                        // 立ち上がりの速さは見ずに、すぐフェードインする
+                        registerOnset(onset)
+                        pausedBefore = false
+                    } else if pendingOnset == nil {
+                        // 立ち上がりの極小の振幅は無音しきい値を行き来するので、判定中の始まりは上書きしない
+                        pendingOnset = onset
+                    }
+                }
                 silentRun = 0
+                lastSoundIndex = inIndex
+                if peak > gentleEdge { lastLoudIndex = inIndex }
             } else {
                 if silentRun < Int.max / 2 { silentRun += 1 }
                 if silentRun == confirmFrames { registerGapStart() }
@@ -180,26 +198,25 @@ public final class FadeProcessor {
         inIndex = 0
         silentRun = 0
         pendingOnset = nil
-    }
-
-    /// 無音が確定した時点で、その直前 gentleWindowFrames のピーク。ring に残っている範囲だけ見る
-    private func peakBeforeGap() -> Float {
-        let last = inIndex - Int64(confirmFrames) // 最後に音があったフレーム
-        let first = max(last - Int64(gentleWindowFrames) + 1, inIndex - Int64(lookahead), 0)
-        var peak: Float = 0
-        var i = first
-        while i <= last {
-            let base = Int(i % Int64(ringFrames)) * channels
-            for c in 0..<channels { peak = max(peak, abs(ring[base + c])) }
-            i += 1
-        }
-        return peak
+        lastSoundIndex = -1
+        lastLoudIndex = -1
+        lastGapConfirmIndex = -1
+        pausedBefore = false
     }
 
     private func registerGapStart() {
-        guard fadeOutFrames > 0 else { return }
-        // 直前の数 ms がずっと小さい（自然な終わり）なら、ぶつ切りではないのでフェード不要
-        guard peakBeforeGap() > gentleEdge else { return }
+        // まだ一度も音がない（再生前の無音）なら、終わりではない
+        guard lastSoundIndex >= 0 else { return }
+        // 直前の gentleWindow のあいだ gentleEdge を超えていなければ、ゆっくり落ちた「自然な終わり」
+        let abrupt = lastSoundIndex - lastLoudIndex < Int64(gentleWindowFrames)
+        if abrupt {
+            pausedBefore = true
+        } else if lastLoudIndex > lastGapConfirmIndex {
+            // 大きな音のあとに自然に終わった（音声合成など）。極小のノイズだけのときは、一時停止の記憶を消さない
+            pausedBefore = false
+        }
+        lastGapConfirmIndex = inIndex
+        guard fadeOutFrames > 0, abrupt else { return }
         // silentRun はちょうど confirmFrames に達した瞬間なので、無音の先頭はそこから遡った位置
         let gapStart = inIndex - Int64(confirmFrames - 1)
         let earliest = inIndex - Int64(lookahead) // これより前はもう出力済み
