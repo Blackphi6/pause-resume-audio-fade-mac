@@ -3,6 +3,8 @@
 [![Downloads](https://img.shields.io/github/downloads/Blackphi6/pause-resume-audio-fade-mac/total?label=downloads)](https://github.com/Blackphi6/pause-resume-audio-fade-mac/releases)
 [![Latest release](https://img.shields.io/github/v/release/Blackphi6/pause-resume-audio-fade-mac?filter=mac-v*&label=latest)](https://github.com/Blackphi6/pause-resume-audio-fade-mac/releases/latest)
 
+公式サイト（聞き比べのデモ付き）: https://blackphi6.github.io/pause-resume-audio-fade/
+
 Chrome 拡張「Pause Resume Audio Fade」の機能（一時停止・再開・シークでの音のフェード）を、
 **どのアプリの再生音にも**効かせる Mac 用メニューバーアプリです（v2.0 以降）。
 
